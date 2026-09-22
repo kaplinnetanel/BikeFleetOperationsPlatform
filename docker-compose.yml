@@ -1,0 +1,114 @@
+services:
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      CLUSTER_ID: "Mk3OEVAVQ0a2e3Mwbj5zUA"
+
+    healthcheck:
+        test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:29092 --list > /dev/null 2>&1"]
+        interval: 10s
+        timeout: 5s
+        retries: 10
+        start_period: 20s
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+        test: ["CMD", "redis-cli", "ping"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
+
+  mongodb:
+    image: mongo:8
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+
+    healthcheck:
+        test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
+
+  mysql:
+    image: mysql:8
+    container_name: mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: Secret
+      MYSQL_DATABASE: BikeFleet
+    healthcheck:
+        test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pSecret"]
+        interval: 10s
+        timeout: 5s
+        retries: 10
+        start_period: 20s  
+
+  ingestion:
+    build:
+      context: ./BikeFleet.IngestionService
+    container_name: bikefleet-ingestion
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+       kafka:
+        condition: service_healthy
+
+  processing:
+    build:
+      context: ./BikeFleet.ProcessingService
+    container_name: bikefleet-processing
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      REDIS_CONNECTION: redis:6379
+      MONGO_CONNECTION: mongodb://mongodb:27017
+      MYSQL_CONNECTION: Server=mysql;Port=3306;Database=BikeFleet;User=root;Password=Secret
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
+
+  api:
+    build:
+      context: ./BikeFleet.Api
+    container_name: bikefleet-api
+    ports:
+      - "8080:8080"
+    environment:
+      REDIS_CONNECTION: redis:6379
+      MONGO_CONNECTION: mongodb://mongodb:27017
+      MYSQL_CONNECTION: Server=mysql;Port=3306;Database=BikeFleet;User=root;Password=Secret
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
